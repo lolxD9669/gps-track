@@ -1,0 +1,125 @@
+<script>
+const TOKEN = "TWÓJ_TOKEN_MAPBOX";
+const refreshInterval = 1000; // 1 sekunda
+
+// mapa
+const map = L.map("map").setView([53.0857,-2.4393], 17);
+L.tileLayer(
+  `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/{z}/{x}/{y}?access_token=${TOKEN}`,
+  { tileSize:512, zoomOffset:-1, attribution:"© Mapbox © OSM" }
+).addTo(map);
+
+// ikony
+const redIcon = L.divIcon({ className:'marker-dot' });
+const greenIcon = L.divIcon({ className:'target-dot' });
+
+// obiekty
+let myMarker = null;
+let targetMarker = null;
+let line = null;
+let target = null;
+
+// funkcja odległości (Haversine)
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const toRad = deg => deg * Math.PI/180;
+  const φ1 = toRad(lat1), φ2 = toRad(lat2);
+  const Δφ = toRad(lat2-lat1), Δλ = toRad(lon2-lon1);
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// aktualizacja pozycji
+function updatePosition(lat, lon, acc) {
+  if (!myMarker) {
+    myMarker = L.marker([lat, lon], { icon: redIcon }).addTo(map);
+  } else {
+    myMarker.setLatLng([lat, lon]);
+  }
+
+  if (target) {
+    if (line) map.removeLayer(line);
+    line = L.polyline([[lat, lon], target], { color:"yellow", weight:2 }).addTo(map);
+
+    const dist = haversine(lat, lon, target[0], target[1]);
+    document.getElementById("info").innerHTML =
+      `📍 Lat: ${lat.toFixed(6)} Lon: ${lon.toFixed(6)} ±${Math.round(acc)} m<br>
+       🎯 Cel: ${target[0].toFixed(6)}, ${target[1].toFixed(6)}<br>
+       📏 Odległość: <b>${dist.toFixed(1)} m</b>`;
+  } else {
+    document.getElementById("info").innerHTML =
+      `Lat: ${lat.toFixed(6)} Lon: ${lon.toFixed(6)} ±${Math.round(acc)} m<br>
+       Brak ustawionego celu`;
+  }
+}
+
+// zapisywanie celów
+function saveTarget(lat, lon) {
+  const stored = JSON.parse(localStorage.getItem("targets") || "[]");
+  stored.unshift({lat, lon, time: new Date().toLocaleString()});
+  const unique = stored.filter((v,i,a)=>
+    a.findIndex(t=>t.lat===v.lat && t.lon===v.lon)===i
+  );
+  localStorage.setItem("targets", JSON.stringify(unique.slice(0,10))); // max 10
+  loadTargets();
+}
+
+// wczytywanie listy celów
+function loadTargets() {
+  const select = document.getElementById("history");
+  select.innerHTML = '<option value="">– wybierz zapisany cel –</option>';
+  const stored = JSON.parse(localStorage.getItem("targets") || "[]");
+  for (const t of stored) {
+    const opt = document.createElement("option");
+    opt.value = `${t.lat},${t.lon}`;
+    opt.textContent = `${t.lat.toFixed(5)}, ${t.lon.toFixed(5)} (${t.time})`;
+    select.appendChild(opt);
+  }
+}
+
+// ustawianie celu z inputów
+document.getElementById("setTarget").addEventListener("click", () => {
+  const lat = parseFloat(document.getElementById("latInput").value);
+  const lon = parseFloat(document.getElementById("lonInput").value);
+  if (isNaN(lat) || isNaN(lon)) { alert("Podaj poprawne współrzędne!"); return; }
+  target = [lat, lon];
+  if (targetMarker) map.removeLayer(targetMarker);
+  targetMarker = L.marker(target, { icon: greenIcon }).addTo(map);
+  map.setView(target);
+  saveTarget(lat, lon);
+});
+
+// wybór celu z historii
+document.getElementById("history").addEventListener("change", e => {
+  const val = e.target.value;
+  if (!val) return;
+  const [lat, lon] = val.split(",").map(parseFloat);
+  target = [lat, lon];
+  if (targetMarker) map.removeLayer(targetMarker);
+  targetMarker = L.marker(target, { icon: greenIcon }).addTo(map);
+  map.setView(target);
+});
+
+// start GPS (co 1 s)
+if ("geolocation" in navigator) {
+  navigator.geolocation.watchPosition(
+    pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const acc = pos.coords.accuracy;
+      updatePosition(lat, lon, acc);
+    },
+    err => {
+      document.getElementById("info").textContent =
+        "Błąd GPS: " + err.message;
+    },
+    { enableHighAccuracy: true, maximumAge: 0 }
+  );
+} else {
+  document.getElementById("info").textContent =
+    "Twoja przeglądarka nie obsługuje geolokalizacji.";
+}
+
+// załaduj historię przy starcie
+loadTargets();
+</script>
