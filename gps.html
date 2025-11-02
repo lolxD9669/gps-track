@@ -62,11 +62,9 @@ const greenIcon = L.divIcon({ className:'target-dot' });
 
 // obiekty
 let myMarker = null;
+let targetMarker = null;
 let line = null;
-let target = [53.085759, -2.439374]; // domyślny cel
-const greenIcon = L.divIcon({ className:'target-dot' });
-let targetMarker = L.marker(target, { icon: greenIcon }).addTo(map);
-map.setView(target, 17);
+let target = null;
   
 // funkcja odległości
 function haversine(lat1, lon1, lat2, lon2) {
