@@ -1,41 +1,85 @@
 <!DOCTYPE html>
-<html>
+<html lang="pl">
 <head>
 <meta charset="utf-8">
-<title>GPS – Cel i odległość live</title>
+<title>GPS Tracker – Live pozycja i cele</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html,body { margin:0; height:100%; }
+  #map { width:100%; height:100%; }
+  #panel {
+    position:absolute; top:10px; left:10px;
+    background:rgba(0,0,0,0.6); color:white;
+    padding:10px 12px; border-radius:8px;
+    font-family:sans-serif; font-size:14px;
+    z-index:1000; width:270px;
+  }
+  #panel input, #panel select, #panel button {
+    width:100%; margin-top:5px; border:none;
+    padding:5px; border-radius:4px; font-size:14px;
+  }
+  #panel button {
+    background:#00aaff; color:white; font-weight:bold;
+    cursor:pointer;
+  }
+  .marker-dot {
+    width:14px; height:14px;
+    background:red; border:2px solid white;
+    border-radius:50%;
+  }
+  .target-dot {
+    width:14px; height:14px;
+    background:lime; border:2px solid white;
+    border-radius:50%;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <div><b>Cel (lat, lon):</b></div>
+  <input id="latInput" placeholder="np. 53.085759">
+  <input id="lonInput" placeholder="np. -2.439374">
+  <button id="setTarget">Ustaw cel</button>
+  <select id="history"></select>
+  <hr>
+  <div id="info">Czekam na GPS...</div>
+</div>
+
 <script>
-const TOKEN = "pk.eyJ1IjoicGlvdHJqZWxvbmVrIiwiYSI6ImNtaGhqaGhhOTA2dzUyanF3dDd5OWhydmMifQ._WbYeMoZH-HLItDZdKjGOg";
+const TOKEN = "pk.eyJ1IjoicGlvdHJqZWxvbmVrIiwiYSI6ImNtaGhqaGhhOTA2dzUyanF3dDd5OWhydmMifQ._WbYeMoZH-HLItDZdKjGOg";  // ← Wklej tutaj swój Mapbox Access Token
 const refreshInterval = 1000; // 1 sekunda
 
-// mapa
-const map = L.map("map").setView([53.0857,-2.4393], 17);
+// --- MAPA SATELITARNA ---
+const map = L.map("map").setView([53.0857, -2.4393], 17);
 L.tileLayer(
   `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/{z}/{x}/{y}?access_token=${TOKEN}`,
   { tileSize:512, zoomOffset:-1, attribution:"© Mapbox © OSM" }
 ).addTo(map);
 
-// ikony
+// --- IKONY ---
 const redIcon = L.divIcon({ className:'marker-dot' });
 const greenIcon = L.divIcon({ className:'target-dot' });
 
-// obiekty
+// --- OBIEKTY ---
 let myMarker = null;
 let targetMarker = null;
 let line = null;
 let target = null;
 
-// funkcja odległości (Haversine)
+// --- FUNKCJA HAVERSINE (odległość w metrach) ---
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371e3;
   const toRad = deg => deg * Math.PI/180;
   const φ1 = toRad(lat1), φ2 = toRad(lat2);
-  const Δφ = toRad(lat2-lat1), Δλ = toRad(lon2-lon1);
+  const Δφ = toRad(lat2 - lat1), Δλ = toRad(lon2 - lon1);
   const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// aktualizacja pozycji
+// --- AKTUALIZACJA POZYCJI ---
 function updatePosition(lat, lon, acc) {
   if (!myMarker) {
     myMarker = L.marker([lat, lon], { icon: redIcon }).addTo(map);
@@ -59,18 +103,18 @@ function updatePosition(lat, lon, acc) {
   }
 }
 
-// zapisywanie celów
+// --- ZAPISYWANIE CELÓW ---
 function saveTarget(lat, lon) {
   const stored = JSON.parse(localStorage.getItem("targets") || "[]");
-  stored.unshift({lat, lon, time: new Date().toLocaleString()});
-  const unique = stored.filter((v,i,a)=>
-    a.findIndex(t=>t.lat===v.lat && t.lon===v.lon)===i
+  stored.unshift({ lat, lon, time: new Date().toLocaleString() });
+  const unique = stored.filter((v, i, a) =>
+    a.findIndex(t => t.lat === v.lat && t.lon === v.lon) === i
   );
-  localStorage.setItem("targets", JSON.stringify(unique.slice(0,10))); // max 10
+  localStorage.setItem("targets", JSON.stringify(unique.slice(0, 10)));
   loadTargets();
 }
 
-// wczytywanie listy celów
+// --- WCZYTYWANIE HISTORII ---
 function loadTargets() {
   const select = document.getElementById("history");
   select.innerHTML = '<option value="">– wybierz zapisany cel –</option>';
@@ -83,7 +127,7 @@ function loadTargets() {
   }
 }
 
-// ustawianie celu z inputów
+// --- USTAWIANIE CELU Z OKIENKA ---
 document.getElementById("setTarget").addEventListener("click", () => {
   const lat = parseFloat(document.getElementById("latInput").value);
   const lon = parseFloat(document.getElementById("lonInput").value);
@@ -95,7 +139,7 @@ document.getElementById("setTarget").addEventListener("click", () => {
   saveTarget(lat, lon);
 });
 
-// wybór celu z historii
+// --- WYBÓR CELU Z HISTORII ---
 document.getElementById("history").addEventListener("change", e => {
   const val = e.target.value;
   if (!val) return;
@@ -106,7 +150,7 @@ document.getElementById("history").addEventListener("change", e => {
   map.setView(target);
 });
 
-// start GPS (co 1 s)
+// --- GPS NA ŻYWO ---
 if ("geolocation" in navigator) {
   navigator.geolocation.watchPosition(
     pos => {
@@ -116,8 +160,7 @@ if ("geolocation" in navigator) {
       updatePosition(lat, lon, acc);
     },
     err => {
-      document.getElementById("info").textContent =
-        "Błąd GPS: " + err.message;
+      document.getElementById("info").textContent = "Błąd GPS: " + err.message;
     },
     { enableHighAccuracy: true, maximumAge: 0 }
   );
@@ -126,7 +169,7 @@ if ("geolocation" in navigator) {
     "Twoja przeglądarka nie obsługuje geolokalizacji.";
 }
 
-// załaduj historię przy starcie
+// --- ZAŁADUJ HISTORIĘ PRZY STARCIU ---
 loadTargets();
 </script>
 </body>
