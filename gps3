@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>GPS Tracker z dźwiękiem – Im bliżej, tym wyżej</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html,body { margin:0; height:100%; }
+  #map { width:100%; height:100%; }
+  #panel {
+    position:absolute; top:10px; left:10px;
+    background:rgba(0,0,0,0.6); color:white;
+    padding:10px 12px; border-radius:8px;
+    font-family:sans-serif; font-size:14px;
+    z-index:1000; width:270px;
+  }
+  #panel input, #panel select, #panel button {
+    width:100%; margin-top:5px; border:none;
+    padding:5px; border-radius:4px; font-size:14px;
+  }
+  #panel button {
+    background:#00aaff; color:white; font-weight:bold;
+    cursor:pointer;
+  }
+  .marker-dot {
+    width:14px; height:14px;
+    background:red; border:2px solid white;
+    border-radius:50%;
+  }
+  .target-dot {
+    width:14px; height:14px;
+    background:lime; border:2px solid white;
+    border-radius:50%;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel">
+  <div><b>Cel (lat, lon):</b></div>
+  <input id="latInput" placeholder="np. 53.085759">
+  <input id="lonInput" placeholder="np. -2.439374">
+  <button id="setTarget">Ustaw cel</button>
+  <select id="history"></select>
+  <hr>
+  <div id="info">Czekam na GPS...</div>
+</div>
+
+<script>
+const TOKEN = "pk.eyJ1IjoicGlvdHJqZWxvbmVrIiwiYSI6ImNtaGhqaGhhOTA2dzUyanF3dDd5OWhydmMifQ._WbYeMoZH-HLItDZdKjGOg";  // ← Wklej tutaj swój Mapbox Access Token
+const refreshInterval = 1000; // 1 sekunda
+const maxSoundDist = 500;     // maksymalny dystans dla dźwięku (m)
+const minPitch = 220;         // minimalna częstotliwość (Hz)
+const maxPitch = 1800;        // maksymalna częstotliwość (Hz)
+
+// --- AUDIO KONFIGURACJA ---
+let audioCtx = null;
+let oscillator = null;
+let gainNode = null;
+let lastBeep = 0;
+
+// funkcja odtwarzająca krótki dźwięk
+function beep(frequency, duration = 0.1) {
+  const now = audioCtx.currentTime;
+  oscillator.frequency.setValueAtTime(frequency, now);
+  gainNode.gain.cancelScheduledValues(now);
+  gainNode.gain.setValueAtTime(0.4, now);
+  gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+}
+
+// --- MAPA ---
+const map = L.map("map").setView([53.0857, -2.4393], 17);
+L.tileLayer(
+  `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/{z}/{x}/{y}?access_token=${TOKEN}`,
+  { tileSize:512, zoomOffset:-1, attribution:"© Mapbox © OSM" }
+).addTo(map);
+
+// --- IKONY ---
+const redIcon = L.divIcon({ className:'marker-dot' });
+const greenIcon = L.divIcon({ className:'target-dot' });
+
+// --- OBIEKTY ---
+let myMarker = null;
+let targetMarker = null;
+let line = null;
+let target = null;
+
+// --- FUNKCJA HAVERSINE ---
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const toRad = deg => deg * Math.PI/180;
+  const φ1 = toRad(lat1), φ2 = toRad(lat2);
+  const Δφ = toRad(lat2 - lat1), Δλ = toRad(lon2 - lon1);
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// --- AKTUALIZACJA POZYCJI ---
+function updatePosition(lat, lon, acc) {
+  if (!myMarker) {
+    myMarker = L.marker([lat, lon], { icon: redIcon }).addTo(map);
+  } else {
+    myMarker.setLatLng([lat, lon]);
+  }
+
+  if (target) {
+    if (line) map.removeLayer(line);
+    line = L.polyline([[lat, lon], target], { color:"yellow", weight:2 }).addTo(map);
+
+    const dist = haversine(lat, lon, target[0], target[1]);
+    document.getElementById("info").innerHTML =
+      `📍 Lat: ${lat.toFixed(6)} Lon: ${lon.toFixed(6)} ±${Math.round(acc)} m<br>
+       🎯 Cel: ${target[0].toFixed(6)}, ${target[1].toFixed(6)}<br>
+       📏 Odległość: <b>${dist.toFixed(1)} m</b>`;
+
+    // --- DŹWIĘK ---
+    const now = Date.now();
+    if (audioCtx && now - lastBeep > 200) {
+      let f = maxPitch - (Math.min(dist, maxSoundDist) / maxSoundDist) * (maxPitch - minPitch);
+      f = Math.max(minPitch, Math.min(maxPitch, f));
+      beep(f, 0.1);
+      lastBeep = now - (dist / maxSoundDist) * 200; // im bliżej, tym szybciej
+    }
+  } else {
+    document.getElementById("info").innerHTML =
+      `Lat: ${lat.toFixed(6)} Lon: ${lon.toFixed(6)} ±${Math.round(acc)} m<br>
+       Brak ustawionego celu`;
+  }
+}
+
+// --- HISTORIA CELÓW ---
+function saveTarget(lat, lon) {
+  const stored = JSON.parse(localStorage.getItem("targets") || "[]");
+  stored.unshift({ lat, lon, time: new Date().toLocaleString() });
+  const unique = stored.filter((v, i, a) =>
+    a.findIndex(t => t.lat === v.lat && t.lon === v.lon) === i
+  );
+  localStorage.setItem("targets", JSON.stringify(unique.slice(0, 10)));
+  loadTargets();
+}
+
+function loadTargets() {
+  const select = document.getElementById("history");
+  select.innerHTML = '<option value="">– wybierz zapisany cel –</option>';
+  const stored = JSON.parse(localStorage.getItem("targets") || "[]");
+  for (const t of stored) {
+    const opt = document.createElement("option");
+    opt.value = `${t.lat},${t.lon}`;
+    opt.textContent = `${t.lat.toFixed(5)}, ${t.lon.toFixed(5)} (${t.time})`;
+    select.appendChild(opt);
+  }
+}
+
+// --- OBSŁUGA PANELU ---
+document.getElementById("setTarget").addEventListener("click", () => {
+  const lat = parseFloat(document.getElementById("latInput").value);
+  const lon = parseFloat(document.getElementById("lonInput").value);
+  if (isNaN(lat) || isNaN(lon)) { alert("Podaj poprawne współrzędne!"); return; }
+  target = [lat, lon];
+  if (targetMarker) map.removeLayer(targetMarker);
+  targetMarker = L.marker(target, { icon: greenIcon }).addTo(map);
+  map.setView(target);
+  saveTarget(lat, lon);
+});
+
+document.getElementById("history").addEventListener("change", e => {
+  const val = e.target.value;
+  if (!val) return;
+  const [lat, lon] = val.split(",").map(parseFloat);
+  target = [lat, lon];
+  if (targetMarker) map.removeLayer(targetMarker);
+  targetMarker = L.marker(target, { icon: greenIcon }).addTo(map);
+  map.setView(target);
+});
+
+// --- START GPS ---
+if ("geolocation" in navigator) {
+  navigator.geolocation.watchPosition(
+    pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const acc = pos.coords.accuracy;
+      updatePosition(lat, lon, acc);
+    },
+    err => {
+      document.getElementById("info").textContent = "Błąd GPS: " + err.message;
+    },
+    { enableHighAccuracy: true, maximumAge: 0 }
+  );
+} else {
+  document.getElementById("info").textContent =
+    "Twoja przeglądarka nie obsługuje geolokalizacji.";
+}
+
+// --- START AUDIO PO PIERWSZYM KLIKNIĘCIU ---
+window.addEventListener("click", () => {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    oscillator = audioCtx.createOscillator();
+    gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode).connect(audioCtx.destination);
+    oscillator.type = "sine";
+    oscillator.start();
+    alert("Dźwięk aktywowany! Im bliżej celu – tym wyższy ton.");
+  }
+});
+
+// --- ZAŁADUJ HISTORIĘ ---
+loadTargets();
+</script>
+</body>
+</html>
